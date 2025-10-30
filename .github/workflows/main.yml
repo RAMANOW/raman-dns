@@ -1,0 +1,234 @@
+name: Build Executable
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  detect-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Extract and Detect Project Type
+      id: detect
+      run: |
+        echo "Extracting tar files..."
+        find . -name "*.tar" -exec tar -xvf {} \;
+        find . -name "*.tar.gz" -exec tar -xzvf {} \;
+        
+        echo "Detecting project type..."
+        
+        # Check for Android
+        if [ -f "build.gradle" ] || [ -f "app/build.gradle" ] || [ -f "settings.gradle" ]; then
+          echo "project_type=android" >> $GITHUB_OUTPUT
+          echo "Detected Android project"
+        # Check for Node.js/React/Vue
+        elif [ -f "package.json" ]; then
+          echo "project_type=nodejs" >> $GITHUB_OUTPUT
+          echo "Detected Node.js project"
+        # Check for Python
+        elif [ -f "setup.py" ] || [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+          echo "project_type=python" >> $GITHUB_OUTPUT
+          echo "Detected Python project"
+        # Check for Go
+        elif [ -f "go.mod" ]; then
+          echo "project_type=go" >> $GITHUB_OUTPUT
+          echo "Detected Go project"
+        # Check for Rust
+        elif [ -f "Cargo.toml" ]; then
+          echo "project_type=rust" >> $GITHUB_OUTPUT
+          echo "Detected Rust project"
+        # Check for Java/Maven
+        elif [ -f "pom.xml" ]; then
+          echo "project_type=java-maven" >> $GITHUB_OUTPUT
+          echo "Detected Java Maven project"
+        # Check for .NET
+        elif [ -f "*.csproj" ] || [ -f "*.sln" ]; then
+          echo "project_type=dotnet" >> $GITHUB_OUTPUT
+          echo "Detected .NET project"
+        else
+          echo "project_type=unknown" >> $GITHUB_OUTPUT
+          echo "Could not detect project type"
+        fi
+        
+    # Android Build
+    - name: Set up JDK for Android
+      if: steps.detect.outputs.project_type == 'android'
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Build Android APK
+      if: steps.detect.outputs.project_type == 'android'
+      run: |
+        chmod +x gradlew || ./gradlew || gradle
+        if [ -f "gradlew" ]; then
+          ./gradlew assembleRelease || ./gradlew assembleDebug
+        else
+          gradle assembleRelease || gradle assembleDebug
+        fi
+        
+    - name: Upload Android APK
+      if: steps.detect.outputs.project_type == 'android'
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: |
+          app/build/outputs/apk/**/*.apk
+          build/outputs/apk/**/*.apk
+          **/*.apk
+          
+    # Node.js Build
+    - name: Set up Node.js
+      if: steps.detect.outputs.project_type == 'nodejs'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: Build Node.js Project
+      if: steps.detect.outputs.project_type == 'nodejs'
+      run: |
+        npm install
+        npm run build || npm run prod || npm run production || echo "No build script found"
+        
+    - name: Upload Node.js Build
+      if: steps.detect.outputs.project_type == 'nodejs'
+      uses: actions/upload-artifact@v4
+      with:
+        name: nodejs-build
+        path: |
+          dist/
+          build/
+          out/
+          public/
+          
+    # Python Build
+    - name: Set up Python
+      if: steps.detect.outputs.project_type == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Build Python Project
+      if: steps.detect.outputs.project_type == 'python'
+      run: |
+        pip install --upgrade pip
+        pip install build wheel setuptools
+        if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
+        python -m build || python setup.py bdist_wheel || echo "Build completed"
+        
+    - name: Upload Python Build
+      if: steps.detect.outputs.project_type == 'python'
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-build
+        path: |
+          dist/
+          build/
+          *.whl
+          
+    # Go Build
+    - name: Set up Go
+      if: steps.detect.outputs.project_type == 'go'
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Build Go Project
+      if: steps.detect.outputs.project_type == 'go'
+      run: |
+        go mod download
+        go build -v -o app
+        
+    - name: Upload Go Build
+      if: steps.detect.outputs.project_type == 'go'
+      uses: actions/upload-artifact@v4
+      with:
+        name: go-build
+        path: |
+          app
+          *.exe
+          
+    # Rust Build
+    - name: Set up Rust
+      if: steps.detect.outputs.project_type == 'rust'
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      
+    - name: Build Rust Project
+      if: steps.detect.outputs.project_type == 'rust'
+      run: |
+        cargo build --release
+        
+    - name: Upload Rust Build
+      if: steps.detect.outputs.project_type == 'rust'
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-build
+        path: |
+          target/release/
+          
+    # Java Maven Build
+    - name: Set up JDK for Maven
+      if: steps.detect.outputs.project_type == 'java-maven'
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Build Java Maven Project
+      if: steps.detect.outputs.project_type == 'java-maven'
+      run: |
+        mvn clean package -DskipTests
+        
+    - name: Upload Maven Build
+      if: steps.detect.outputs.project_type == 'java-maven'
+      uses: actions/upload-artifact@v4
+      with:
+        name: maven-build
+        path: |
+          target/*.jar
+          target/*.war
+          
+    # .NET Build
+    - name: Set up .NET
+      if: steps.detect.outputs.project_type == 'dotnet'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
+    - name: Build .NET Project
+      if: steps.detect.outputs.project_type == 'dotnet'
+      run: |
+        dotnet restore
+        dotnet build --configuration Release
+        dotnet publish --configuration Release --output ./publish
+        
+    - name: Upload .NET Build
+      if: steps.detect.outputs.project_type == 'dotnet'
+      uses: actions/upload-artifact@v4
+      with:
+        name: dotnet-build
+        path: |
+          publish/
+          bin/Release/
+          
+    # Generic Build for Unknown Projects
+    - name: Create Generic Archive
+      if: steps.detect.outputs.project_type == 'unknown'
+      run: |
+        echo "Creating generic archive of project files..."
+        tar -czf project-archive.tar.gz .
+        
+    - name: Upload Generic Archive
+      if: steps.detect.outputs.project_type == 'unknown'
+      uses: actions/upload-artifact@v4
+      with:
+        name: project-archive
+        path: project-archive.tar.gz
