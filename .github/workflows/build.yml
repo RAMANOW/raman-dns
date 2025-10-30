@@ -1,0 +1,133 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Extract project files from tar
+      run: |
+        if [ -f "workspace-74270303-c20e-441e-a088-797ab2d5b3b4.tar" ]; then
+          tar -xf workspace-74270303-c20e-441e-a088-797ab2d5b3b4.tar
+          echo "Project extracted from tar file"
+          ls -la
+        else
+          echo "No tar file found, using repository as-is"
+        fi
+
+    - name: Detect Android project
+      id: detect
+      run: |
+        echo "Searching for Android project..."
+        
+        # Check for Android project indicators
+        if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ] || [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+          echo "android=true" >> $GITHUB_OUTPUT
+          echo "Android project detected at root"
+        elif [ -f "app/build.gradle" ] || [ -f "app/build.gradle.kts" ]; then
+          echo "android=true" >> $GITHUB_OUTPUT
+          echo "Android project detected with app module"
+        elif [ -f "android/build.gradle" ]; then
+          echo "android=true" >> $GITHUB_OUTPUT
+          echo "React Native Android project detected"
+        else
+          echo "android=false" >> $GITHUB_OUTPUT
+          echo "No Android project detected"
+        fi
+
+    - name: Set up JDK 17
+      if: steps.detect.outputs.android == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'gradle'
+
+    - name: Grant execute permission for gradlew
+      if: steps.detect.outputs.android == 'true'
+      run: |
+        if [ -f "gradlew" ]; then
+          chmod +x gradlew
+        elif [ -f "android/gradlew" ]; then
+          cd android
+          chmod +x gradlew
+        fi
+
+    - name: Build Android APK
+      if: steps.detect.outputs.android == 'true'
+      run: |
+        if [ -f "gradlew" ]; then
+          ./gradlew assembleRelease --no-daemon
+        elif [ -f "android/gradlew" ]; then
+          cd android
+          ./gradlew assembleRelease --no-daemon
+        fi
+
+    - name: Find and prepare APK
+      if: steps.detect.outputs.android == 'true'
+      id: prepare-apk
+      run: |
+        # Find all APK files
+        find . -name "*.apk" -type f
+        
+        # Create artifacts directory
+        mkdir -p apk-artifacts
+        
+        # Copy all APKs to artifacts directory
+        find . -name "*.apk" -type f -exec cp {} apk-artifacts/ \;
+        
+        # List artifacts
+        echo "APK files prepared:"
+        ls -lh apk-artifacts/
+        
+        # Check if any APK was found
+        if [ -z "$(ls -A apk-artifacts/)" ]; then
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "No APK files found"
+        else
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "APK files ready for upload"
+        fi
+
+    - name: Upload APK Artifacts
+      if: steps.detect.outputs.android == 'true' && steps.prepare-apk.outputs.found == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: apk-artifacts/*.apk
+        retention-days: 30
+
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.detect.outputs.android }}" == "true" ]; then
+          echo "✅ Android project detected" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.prepare-apk.outputs.found }}" == "true" ]; then
+            echo "✅ APK build successful" >> $GITHUB_STEP_SUMMARY
+            echo "📦 APK artifacts uploaded" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ APK build failed or no APK produced" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "❌ No Android project detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This repository doesn't appear to contain an Android project." >> $GITHUB_STEP_SUMMARY
+          echo "To build an APK, ensure your repository contains:" >> $GITHUB_STEP_SUMMARY
+          echo "- build.gradle or build.gradle.kts" >> $GITHUB_STEP_SUMMARY
+          echo "- settings.gradle or settings.gradle.kts" >> $GITHUB_STEP_SUMMARY
+          echo "- Android app source code" >> $GITHUB_STEP_SUMMARY
+        fi
